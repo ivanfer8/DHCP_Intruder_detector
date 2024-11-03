@@ -112,6 +112,7 @@ def main():
 
         attack_choice = int(input(colored("\nSelecciona el tipo de ataque: ", "cyan")))
 
+
         if attack_choice == 1:
             print(colored(f"\nIniciando ARP Spoofing contra {target_ip}...", "yellow"))
             arp_spoof(target_ip, target_mac)
